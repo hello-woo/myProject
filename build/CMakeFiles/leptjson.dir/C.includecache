@@ -13,6 +13,10 @@ assert.h
 -
 stdlib.h
 -
+errno.h
+-
+math.h
+-
 
 /home/zzc/myProject/leptjson.h
 
