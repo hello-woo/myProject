@@ -7,6 +7,8 @@
 #IncludeRegexTransform: 
 
 /home/zzc/myProject/leptjson.h
+stddef.h
+-
 
 /home/zzc/myProject/test.c
 stdio.h
