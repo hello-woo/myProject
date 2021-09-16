@@ -163,8 +163,52 @@ static int lept_parse_number(lept_context* c,lept_value* v){
     return LEPT_PARSE_OK;
 }
 
+/* 
+解析4位16进制，存储为码点u；若成功，返回解析后的文本指针，失败返回NULL。 
+传入参数：p，第一个要转义字符的指针。
+传出参数：u，解析之后的二进制。
+返回值：解析完4位后指针位置*/
+static const char* lept_parse_hex4(const char* p,unsigned* u){
+    int i;
+    *u = 0;
+    for(i = 0 ;i < 4 ;i++){
+        char ch = *p++;
+        *u <<= 4;
+        if(ch >= '0' && ch <= '9')      *u |= ch - '0';
+        else if(ch >= 'A' && ch <= 'F') *u |= ch - ('A' - 10);
+        else if(ch >= 'a' && ch <= 'f') *u |= ch - ('a' - 10);
+        else return NULL;
+    }
+    return p;
+}
+
+/* 将码点u编码为UTF-8之后存入字符串的缓冲区栈空间里面 */
+/* &1保持位上数字不变，|1 取并集 */
+static void lept_encode_utf8(lept_context* c, unsigned u){
+    if(u <= 0x7F){
+        PUTC(c,u & 0xFF);
+    }else if(u <= 0x7FF){
+        PUTC(c, 0xC0 | ((u >> 6) & 0xFF));
+        PUTC(c, 0x80 | ( u       & 0x3F));
+    }else if( u <= 0xFFFF){
+        PUTC(c, 0xE0 | ((u >> 12) & (0xFF)));
+        PUTC(c, 0x80 | ((u >>  6) & (0x3F)));
+        PUTC(c, 0X80 | ( u        &  0X3F));
+
+    }else{
+        assert(u <= 0x10FFFF);
+        PUTC(c, 0xF0 | ((u >> 18) & 0xFF));
+        PUTC(c, 0x80 | ((u >> 12) & 0x3F));
+        PUTC(c, 0x80 | ((u >>  6) & 0x3F));
+        PUTC(c, 0x80 | ( u        & 0x3F));
+    }
+}
+
+#define STRING_ERROR(ret) do{ c->top = head; return ret;}while(0)
+
 static int lept_parse_string(lept_context* c,lept_value *v){
     size_t head = c->top,len; /* 备份栈顶 */
+    unsigned u ,u2;
     const char* p;
     EXPECT(c,'\"');/* 字符串是以"开始的 */
     p = c->json;
@@ -177,9 +221,8 @@ static int lept_parse_string(lept_context* c,lept_value *v){
                 c->json = p; 
                 return LEPT_PARSE_OK;
             case '\0':
-                c->top = head;
-                return LEPT_PARSE_MISS_QUOTATION_MARK;
-                /* 新增转义字符的解析 */
+                STRING_ERROR(LEPT_PARSE_MISS_QUOTATION_MARK);
+            /* 新增转义字符的解析 */
             case '\\':
                 switch (*p++)
                 {
@@ -191,16 +234,42 @@ static int lept_parse_string(lept_context* c,lept_value *v){
                 case 'n':   PUTC(c, '\n'); break;
                 case 'r':   PUTC(c, '\r'); break;
                 case 't':   PUTC(c, '\t'); break;
+                /* unicode 解析：先调用lept_parse_hex4解析为4位十六进制数字，存储为码点u,然后将码点编码成UTF-8，写进缓冲区 */
+                case 'u':
+                    if(!(p = lept_parse_hex4(p,&u))){
+                        STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+                    }
+                    /* 对代理对的处理 */
+                /* JSON 会使用代理对（surrogate pair）表示 \uXXXX\uYYYY 高代理项后面接着低代理项*/
+                /* 如果第一个码点是 U+D800 至 U+DBFF，我们便知道它的代码对的高代理项（high surrogate），
+                   之后应该伴随一个 U+DC00 至 U+DFFF 的低代理项（low surrogate）。
+                   然后，我们用下列公式把代理对 (H, L) 变换成真实的码点： 
+                   codepoint = 0x10000 + (H − 0xD800) × 0x400 + (L − 0xDC00)*/
+                    if(u >= 0xD800 && u <= 0xDBFF){
+                        if(*p++ != '\\'){
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                        }
+                        if(*p++ != 'u'){
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                        }
+                        if(!(p = lept_parse_hex4(p, &u2))){
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX);
+                        }
+                        if(u2 < 0xDC00 || u2 > 0xDFFF){
+                            STRING_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE);
+                        }
+                        u = (((u - 0xD800) << 10) | (u2 - 0xDC00)) + 0x10000;
+                    }
+                    lept_encode_utf8(c,u);
+                    break;
                 default:
-                    c->top = head;
-                    return LEPT_PARSE_INVALID_STRING_ESCAPE;
+                    STRING_ERROR(LEPT_PARSE_INVALID_STRING_ESCAPE);
                 }
                 break;
             default:
                 /* ASCII可显示字符 最低从32（空格）开始 */
                 if((unsigned char)(ch) < 0x20) {
-                    c->top = head;
-                    return LEPT_PARSE_INVALID_STRING_CHAR;
+                    STRING_ERROR(LEPT_PARSE_INVALID_STRING_CHAR);
                 }
                 PUTC(c, ch); /* 将字符入栈 */
                 break;
