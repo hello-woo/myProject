@@ -12,6 +12,7 @@
 #define EXPECT(c, ch)       do { assert(*c->json == (ch)); c->json++;} while(0)
 #define ISDIGIT1TO9(ch)     ((ch) >= '1' && (ch) <= '9')
 #define ISDIGIT(ch)         ((ch) >= '0' && (ch) <= '9')
+/* 返回值为指针：lept_context 栈的指针加上栈顶元素的位置，该位置的值附上值ch*/
 #define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
 
 
@@ -40,6 +41,7 @@ f ➔ false
 static void* lept_context_push(lept_context* c,size_t size){
     void* ret;
     assert(size > 0);
+    /* 初始化栈大小以及扩容 */
     if(c->top + size >= c->size){
         /* 如果为零，先初始化 */
         if(c->size == 0) {
@@ -51,8 +53,8 @@ static void* lept_context_push(lept_context* c,size_t size){
         }
         c->stack = (char*)realloc(c->stack ,c->size); /* realloc重新分配内存，不用为第一次内存分配特殊处理 */
     }
-    ret = c->stack + c->size; /* 将指针前移size大小 */
-    c->top += c->size; /* top栈顶指针移动size大小 */
+    ret = c->stack + c->top; /* 这里【注意】加上c->top,每次指向要下一个要push位置的指针 */
+    c->top += size; /* top栈顶指针移动size大小 */
     return ret;
 }
 
@@ -168,19 +170,40 @@ static int lept_parse_string(lept_context* c,lept_value *v){
     p = c->json;
     for(; ;){
         char ch = *p++;
-        switch (ch)
-        {
-        case '\"':
-            len = c->top - head ; /* 字符入栈之后栈顶指针会增加，减去原来的栈顶，得到字符串的长度 */
-            lept_set_string(v,(const char*)lept_context_pop(c,len),len); /* 将字符串 c拷贝到字符串v里面*/
-            c->json = p; /*  */
-            return LEPT_PARSE_OK;
-        case '\0':
-            c->top = head;
-            return LEPT_PARSE_MISS_QUOTATION_MARK;
-        default:
-            PUTC(c, ch); /* 将字符入栈 */
-            break;
+        switch (ch){
+            case '\"':
+                len = c->top - head ; /* 字符入栈之后栈顶指针会增加，减去原来的栈顶，得到字符串的长度 */
+                lept_set_string(v,(const char*)lept_context_pop(c,len),len); /* 将字符串 c拷贝到字符串v里面*/
+                c->json = p; 
+                return LEPT_PARSE_OK;
+            case '\0':
+                c->top = head;
+                return LEPT_PARSE_MISS_QUOTATION_MARK;
+                /* 新增转义字符的解析 */
+            case '\\':
+                switch (*p++)
+                {
+                case '\"':  PUTC(c,'\"');break;
+                case '\\':  PUTC(c,'\\');break;
+                case '/':   PUTC(c, '/');break;
+                case 'b':   PUTC(c,'\b');break;
+                case 'f':   PUTC(c, '\f'); break;
+                case 'n':   PUTC(c, '\n'); break;
+                case 'r':   PUTC(c, '\r'); break;
+                case 't':   PUTC(c, '\t'); break;
+                default:
+                    c->top = head;
+                    return LEPT_PARSE_INVALID_STRING_ESCAPE;
+                }
+                break;
+            default:
+                /* ASCII可显示字符 最低从32（空格）开始 */
+                if((unsigned char)(ch) < 0x20) {
+                    c->top = head;
+                    return LEPT_PARSE_INVALID_STRING_CHAR;
+                }
+                PUTC(c, ch); /* 将字符入栈 */
+                break;
         }
     }
 }
@@ -220,22 +243,16 @@ static int lept_parse_value(lept_context* c ,lept_value* v){
     {
     case 't':
         return lept_parse_literal(c,v,"true" ,LEPT_TRUE);
-        break;
     case 'f':
         return lept_parse_literal(c,v,"false",LEPT_FALSE);
-        break;
     case 'n':
         return lept_parse_literal(c,v,"null",LEPT_NULL);
-        break;
     case '\0':
         return LEPT_PARSE_EXPECT_VALUE;
-        break;
     case '"':
         return lept_parse_string(c,v);
-        break;
     default:
         return lept_parse_number(c,v);
-        break;
     }
 }
 

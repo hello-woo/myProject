@@ -115,7 +115,7 @@ static void test_parse_number() {
     } while(0)
 
 static void test_parse_string() {
-#if 0
+#if 1
     TEST_STRING("", "\"\"");
     TEST_STRING("Hello", "\"Hello\"");
 #endif
@@ -183,6 +183,7 @@ static void test_parse_missing_quotation_mark(){
     TEST_ERROR(LEPT_PARSE_MISS_QUOTATION_MARK, "\"abc");
 }
 
+/*  */
 static void test_parse_invalid_string_escape() {
 #if 0
     TEST_ERROR(LEPT_PARSE_INVALID_STRING_ESCAPE, "\"\\v\"");
@@ -205,16 +206,27 @@ static void test_access_null(){
     lept_set_string(&v,"a",1);
     lept_set_null(&v);
     EXPECT_EQ_INT(LEPT_NULL , lept_get_type(&v));
-    /* lept_free(&v);*/
+    lept_free(&v);
 }
 
 static void test_access_boolean() {
-    /* \TODO */
-    /* Use EXPECT_TRUE() and EXPECT_FALSE() */
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v,"a",1);
+    lept_set_boolean(&v, 1); /* 设置为true */
+    EXPECT_TRUE(lept_get_boolean(&v));
+    lept_set_boolean(&v ,0);
+    EXPECT_FALSE(lept_get_boolean(&v));
+    lept_free(&v);
 }
 
 static void test_access_number() {
-    /* \TODO */
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v,"a", 1);
+    lept_set_number(&v,1234.5);
+    EXPECT_EQ_DOUBLE(1234.5,lept_get_number(&v));
+    lept_free(&v);
 }
 
 static void test_access_string() {

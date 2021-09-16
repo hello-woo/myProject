@@ -62,4 +62,40 @@ unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
 而且我们将会发现，无论是解析字符串、数组或对象，我们也只需要以先进后出的方式访问这个动态数组。换句话说，我们需要一个动态的堆栈（stack）数据结构。
 
 ## 内存泄漏检测方法
-lINUX
+Liunx 系统下 
+命令行 ` valgrind --leak-check= full ./lept_json.test`
+
+Valgrind 还有很多功能，例如可以发现未初始化变量。我们若在应用程序或测试程序中，忘了调用 lept_init(&v)，那么 v.type 的值没被初始化，其值是不确定的（indeterministic），一些函数如果读取那个值就会出现问题：
+
+## Q&A
+2.实现除了 \u 以外的转义序列解析，令 test_parse_string() 中所有测试通过。
+
+**解析**：当遇到字符'\'时，增加swith case语句；
+
+**遇到的问题**：测试test_parse_string()，遇到段错误（segmentation fault)
+
+**解决问题思路**：实现肯定是解析字符串时候发生的，而且段错误一般是非法访问内存，常见于`malloc()`之类的动态内存分配，申请内存之后没有将指针赋值为`NULL`。或者数组访问越界，或者栈中定义过大的数组，导致栈空间不足；
+
+排查之后发现，在字符串push操作的返回的指针越界导致的.之前为`ret = c->stack + c->size` `c->top += c->size()`,而`c->size`初始值为256,后面使用时发生错误，此处为逻辑错误，没有思考清楚，应该改为：
+
+```cpp
+ret = c->stack + c->top; /* 这里【注意】加上c->top,每次指向要下一个要push位置的指针 */
+c->top += size; /* top栈顶指针移动size大小 */
+```
+
+3、不合法的字符串
+```cpp
+unescaped = %x20-21 / %x23-5B / %x5D-10FFFF
+```
+当中空缺的 %x22 是双引号，%x5C 是反斜线，都已经处理。所以不合法的字符是 %x00 至 %x1F。我们简单地在 default 里处理：
+
+4、性能优化的思考
+摘自原github：
+
+https://github.com/miloyip/json-tutorial/blob/master/tutorial03_answer/tutorial03_answer.md
+
+1、如果整个字符串都没有转义符，我们不就是把字符复制了两次？第一次是从 json 到 stack，第二次是从 stack 到 v->u.s.s。我们可以在 json 扫描 '\0'、'\"' 和 '\\' 3 个字符（ ch < 0x20 还是要检查），直至它们其中一个出现，才开始用现在的解析方法。这样做的话，前半没转义的部分可以只复制一次。缺点是，代码变得复杂一些，我们也不能使用 lept_set_string()。
+
+2、对于扫描没转义部分，我们可考虑用 SIMD 加速，如 RapidJSON 代码剖析（二）：使用 SSE4.2 优化字符串扫描 的做法。这类底层优化的缺点是不跨平台，需要设置编译选项等。
+
+3、在 gcc/clang 上使用 __builtin_expect() 指令来处理低概率事件，例如需要对每个字符做 LEPT_PARSE_INVALID_STRING_CHAR 检测，我们可以假设出现不合法字符是低概率事件，然后用这个指令告之编译器，那么编译器可能可生成较快的代码。然而，这类做法明显是不跨编译器，甚至是某个版本后的 gcc 才支持。
