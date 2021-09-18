@@ -34,6 +34,17 @@ static int test_pass = 0;
 #define EXPECT_TRUE(actual) EXPECT_EQ_BASE((actual) != 0, "true", "false", "%s")
 #define EXPECT_FALSE(actual) EXPECT_EQ_BASE((actual) == 0, "false", "true", "%s")
 
+/* C语言数组大小应该用size_t的类型，
+ANSI C（C89）并没有的 size_t 打印方法，
+在 C99 则加入了 "%zu"，但 VS2015 中才有，之前的 VC 版本使用非标准的 "%Iu" 
+因此，代码使用条件编译去区分 VC 和其他编译器*/
+
+#if defined(_MSC_VER)
+#define EXPECT_EQ_SIZE_T(expect, actual) EXPECT_EQ_BASE((expect) == (actual), (size_t)expect, (size_t)actual, "%Iu")
+#else
+#define EXPECT_EQ_SIZE_T(expect, actual) EXPECT_EQ_BASE((expect) == (actual), (size_t)expect, (size_t)actual, "%ld")
+#endif
+
 static void test_parse_null() {
     lept_value v;
     lept_init(&v);
@@ -174,6 +185,12 @@ static void test_parse_root_not_singular() {
     TEST_ERROR(LEPT_PARSE_ROOT_NOT_SINGULAR, "0x0");
     TEST_ERROR(LEPT_PARSE_ROOT_NOT_SINGULAR, "0x123");
 #endif 
+        /* invalid value in array */
+#if 1
+    TEST_ERROR(LEPT_PARSE_INVALID_VALUE, "[1,]");
+    TEST_ERROR(LEPT_PARSE_INVALID_VALUE, "[\"a\", nul]");
+#endif
+
 }
 
 static void test_parse_number_too_big(){
@@ -267,6 +284,55 @@ static void test_parse_invalid_unicode_surrogate() {
     TEST_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uDBFF\"");
     TEST_ERROR(LEPT_PARSE_INVALID_UNICODE_SURROGATE, "\"\\uD800\\uE000\"");
 }
+
+static void test_parse_array(){
+    size_t i ,j ;
+    lept_value v;
+    lept_init(&v);
+    EXPECT_EQ_INT(LEPT_PARSE_OK, lept_parse(&v, "[ ]"));
+    EXPECT_EQ_INT(LEPT_ARRAY,lept_get_type(&v));
+    EXPECT_EQ_SIZE_T(0,lept_get_array_size(&v));
+    lept_free(&v);
+
+    lept_init(&v);
+    EXPECT_EQ_INT(LEPT_PARSE_OK,lept_parse(&v,"[ null , false , true , 123 , \"abc\" ]"));
+    EXPECT_EQ_INT(LEPT_ARRAY,lept_get_type(&v));
+    EXPECT_EQ_SIZE_T(5,lept_get_array_size(&v));
+    EXPECT_EQ_INT(LEPT_NULL,   lept_get_type(lept_get_array_element(&v, 0)));
+    EXPECT_EQ_INT(LEPT_FALSE,  lept_get_type(lept_get_array_element(&v, 1)));
+    EXPECT_EQ_INT(LEPT_TRUE,   lept_get_type(lept_get_array_element(&v, 2)));
+    EXPECT_EQ_INT(LEPT_NUMBER, lept_get_type(lept_get_array_element(&v, 3)));
+    EXPECT_EQ_INT(LEPT_STRING, lept_get_type(lept_get_array_element(&v, 4)));
+    EXPECT_EQ_DOUBLE(123.0, lept_get_number(lept_get_array_element(&v, 3)));
+    EXPECT_EQ_STRING("abc", lept_get_string(lept_get_array_element(&v, 4)), lept_get_string_length(lept_get_array_element(&v, 4)));
+    lept_free(&v);
+
+    lept_init(&v);
+    EXPECT_EQ_INT(LEPT_PARSE_OK,lept_parse(&v, "[ [ ] , [ 0 ] , [ 0 , 1 ] , [ 0 , 1 , 2 ] ]"));
+    EXPECT_EQ_INT(LEPT_ARRAY,lept_get_type(&v));
+    EXPECT_EQ_SIZE_T(4,lept_get_array_size(&v));
+    for(i = 0 ;i < 4 ;i++){
+        lept_value* a = lept_get_array_element(&v,i);
+        EXPECT_EQ_INT(LEPT_ARRAY,lept_get_type(a));
+        EXPECT_EQ_SIZE_T(i,lept_get_array_size(a));
+        for(j = 0 ; j < i ;j++){
+            lept_value* e = lept_get_array_element(a,j);
+            EXPECT_EQ_INT(LEPT_NUMBER,lept_get_type(e));
+            EXPECT_EQ_DOUBLE((double)j ,lept_get_number(e));
+        }
+    }
+    lept_free(&v);
+}
+
+static void test_parse_miss_comma_or_square_bracket() {
+#if 1
+    TEST_ERROR(LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[1");
+    TEST_ERROR(LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[1}");
+    TEST_ERROR(LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[1 2");
+    TEST_ERROR(LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET, "[[]");
+#endif
+}
+
 static void test_parse() {
     test_parse_null();
     test_parse_true();
@@ -287,6 +353,9 @@ static void test_parse() {
     test_access_boolean();
     test_access_number();
     test_access_string();
+
+    test_parse_array();
+    test_parse_miss_comma_or_square_bracket();
 }
 
 int main() {

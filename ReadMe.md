@@ -214,3 +214,136 @@ static int lept_parse_string(lept_context* c, lept_value* v) {
 ```
 
 **处理思路**为：遇到 \u 转义时，调用 lept_parse_hex4() 解析 4 位十六进数字，存储为码点 u。这个函数在成功时返回解析后的文本指针，失败返回 NULL。如果失败，就返回 LEPT_PARSE_INVALID_UNICODE_HEX 错误。最后，把码点编码成 UTF-8，写进缓冲区.
+
+
+# Part06 解析数组
+## 1.json数组
+解析复合的数据类型。一个json数组可以包含零至多个元素，这些元素也可以是数组类型。
+JSON数组的语法：
+
+```cpp
+array = %x5B ws [ value *( ws %x2C ws value ) ] ws %x5D
+```
+当中，`%x5B` 是左中括号` [`，`%x2C` 是逗号 `,`，`%x5D` 是右中括号 `]` ，`ws `是空白字符。一个数组可以包含零至多个值，以逗号分隔，例如 `[]、[1,2,true]、[[1,2],[3,4],"abc"] `都是合法的数组。但注意 JSON 不接受末端额外的逗号，例如 `[1,2,]` 是不合法的（许多编程语言如 C/C++、Javascript、Java、C# 都容许数组初始值包含末端逗号）。
+
+## 2.数据结构
+存储JSON数组类型的数据结构。
+JSON数组存储零至多个元素，
+（1)**数组**
+优点：能以$O(1)$用索引访问元素，内存布局紧凑，节省内存、高缓存一致性；
+缺点：不能快速插入元素，而且解析JSON数组的时候，不知道分配多大数组。
+
+（2）**链表**
+优点:可以优点是可以快速地插入元素（开端、末端或中间），但需要以$O(n)$取值，
+缺点：相对于数组而言，链表在存储每个元素时有额外的内存开销（存储下一节点的指针），而且遍历的时候元素可能不连续，令缓存不命中的机会上升。
+
+综合考虑，考虑以数组。
+在lept_value中加入结构体array数组；
+```cpp
+typedef struct lept_value lept_value; /* 用到自己，前向声明 */
+struct lept_value {
+    union {
+        struct { lept_value* e; size_t size; }array; /* array */
+        struct { char* s; size_t len; }str;
+        double num;
+    }u;
+    lept_type type;
+};
+```
+## 3.解析过程
+解析json字符串时，因为开始时不知道字符串的长度，但是需要转义，故可以用一个临时缓冲区去存储解析后的结构。
+实现方式：动态增长的堆栈，不断地压入字符，最后一次性把整个字符串弹出。
+
+在实现解析JSON数组时候，也可以用同样的方式，而且可以用同一个堆栈！
+
+可以把json当作一棵树的数据结构，JSON字符串是叶子节点，JSON数组是中间节点。在叶子节点的解析函数中，
+怎么使用那个堆栈都没有问题，最后还原即可。但是对于数组这样的中间节点，共用这个堆栈没有问题吗？
+
+答案是：只要在解析函数结束时还原堆栈的状态，就没有问题。
+
+## 4.遇到的问题：
+
+**1.打印 `size_t`时的问题**
+
+```cpp
+ In function ‘test_parse_array’:
+/home/zzc/myProject/test.c:21:29: warning: ISO C90 does not support the ‘z’ gnu_printf length modifier [-Wformat=]
+   21 |             fprintf(stderr, "%s:%d: expect: " format " actual: " format "\n", __FILE__, __LINE__, expect, actual);\
+```
+
+这是由于在打印size_t类型时遇到的错误；将`%zu`改为`%ld`
+
+**2.栈内存空间没有释放**
+
+```cpp
+leptjson_test: /home/zzc/myProject/leptjson.c:388: lept_parse: Assertion `c.top == 0' failed.
+[1]    1622855 abort (core dumped)  ./leptjson_test
+```
+当错误发生时，仍然有一些临时值在堆栈里，既没有放进数组，也没有被释放。修改 `lept_parse_array()`
+
+当遇到错误时，从堆栈中弹出并释放那些临时值，然后才返回错误码。
+
+**解决思路** :
+
+在遇到错误的时候，利用break跳出循环，在外面用`lept_free`释放从堆栈弹出的值，然后才返回错误码；
+```cpp
+static int lept_parse_array(lept_context* c, lept_value* v) {
+    /* ... */
+    for (;;) {
+        /* ... */
+        if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK)
+            break;
+        /* ... */
+        else {
+            ret = LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+            break;
+        }
+    }
+    /* 弹出栈中的元素，并且释放栈空间 */
+    for (i = 0; i < size; i++)
+        lept_free((lept_value*)lept_context_pop(c, sizeof(lept_value)));
+    return ret;
+}
+```
+**3.内存泄漏的问题**
+
+用内存泄漏工具检查出有两处内存泄漏；
+
+![image-20210917145101762](https://i.loli.net/2021/09/17/FKdSsYtLUENulfr.png)
+
+**原因**：在malloc()之后没有对应的free()。
+![image-20210917145413783](https://i.loli.net/2021/09/17/f6qE5GNDLcPkrY9.png)
+
+**解决办法**：在 lept_free()，当值被释放时，该值拥有的内存也在那里释放。之前字符串的释放也是放在这里，但是对于JSON数组，应该先把数组内的元素通过递归调用 lept_free() 释放，然后才释放本身的 v->u.a.e：
+
+**4.BUG的解释**
+```cpp
+    for (;;) {
+        lept_value e;
+        lept_init(&e);
+        if ((ret = lept_parse_value(c, &e)) != LEPT_PARSE_OK)
+            return ret;
+        memcpy(lept_context_push(c, sizeof(lept_value)), &e, sizeof(lept_value));
+        size++;
+```
+将上面的代码写为：
+```cpp
+    for (;;) {
+        /* bug! */
+        lept_value* e = lept_context_push(c, sizeof(lept_value));
+        lept_init(e);
+        size++;
+        if ((ret = lept_parse_value(c, e)) != LEPT_PARSE_OK)
+            return ret;
+        /* ... */
+    }
+```
+第二种写法是，先用指针e指向栈里面push一个`lept_value大小`的位置，然后再解析`lept_context c`，将解析结果存入指针e指向的位置。
+
+对比与第一种写法，有什么区别呢？
+
+第一种写法是先把c解析存入一个临时变量`lept_value e`里面，然后把e 拷贝入c的栈空间里面。
+
+第二种写法中我们把这个指针调用 lept_parse_value(c, e)，这里会出现问题，因为 lept_parse_value() 及之下的函数都需要调用 lept_context_push()，而 lept_context_push() 在发现栈满了的时候会用 realloc() 扩容。这时候，我们上层的 e 就会失效，变成一个悬挂指针（dangling pointer），而且 lept_parse_value(c, e) 会通过这个指针写入解析结果，造成非法访问。
+
+**函数编码规范**： 考虑变量的生命周期，特别是指针的生命周期尤其重要。

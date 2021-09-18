@@ -278,9 +278,21 @@ static int lept_parse_string(lept_context* c,lept_value *v){
 }
 
 void lept_free(lept_value* v){
+    size_t i;
     assert(v != NULL);
-    if(v->type == LEPT_STRING){
+    switch (v->type)
+    {
+    case LEPT_STRING:
         free(v->u.str.s);
+        break;
+    case LEPT_ARRAY:
+        for(i = 0 ;i < v->u.array.size;i++){
+            lept_free(&v->u.array.e[i]);
+        }
+        free(v->u.array.e);
+        break;
+    default:
+        break;
     }
     v->type = LEPT_NULL;
 }
@@ -307,6 +319,56 @@ size_t lept_get_string_length(const lept_value* v){
     return v->u.str.len;
 }
 
+static int lept_parse_value(lept_context* c,lept_value* v); /* 前向声明 */
+
+static int lept_parse_array(lept_context* c ,lept_value* v){
+    size_t i ,size = 0;
+    int ret;
+    EXPECT(c,'[');
+    lept_parse_whitespace(c);
+    if(*c->json == ']'){
+        c->json++;
+        v->type = LEPT_ARRAY;
+        v->u.array.size = 0;
+        v->u.array.e = NULL;
+        return LEPT_PARSE_OK;
+    }
+    for(;;){
+        /* 临时变量 */
+        lept_value e;
+        lept_init(&e);
+        /* 解析c，存入临时值e中*/
+        ret = lept_parse_value(c, &e);
+        if(ret != LEPT_PARSE_OK){
+            break;
+        }
+        /* 把e拷贝进入c的那个指针中 */
+        memcpy(lept_context_push(c, sizeof(lept_value)), &e,sizeof(lept_value));
+        size++;
+        lept_parse_whitespace(c);
+        if(*c->json == ','){
+            c->json++;
+            lept_parse_whitespace(c);
+        }else if(*c->json == ']'){
+            c->json++;
+            v->type = LEPT_ARRAY;
+            v->u.array.size = size;
+            size *= sizeof(lept_value);
+            memcpy(v->u.array.e = (lept_value* )malloc(size), lept_context_pop(c,size),size);
+            return LEPT_PARSE_OK;
+        }else{
+            ret = LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET;
+            break;
+        }
+    }
+    /* 当遇到错误时，上面break跳出，弹出栈的元素，释放栈空间 */
+    for( i = 0 ; i < size ; i++){
+        lept_free((lept_value*)lept_context_pop(c,sizeof(lept_value)));
+    }
+    return ret;
+}
+
+
 static int lept_parse_value(lept_context* c ,lept_value* v){
     switch (*c->json)
     {
@@ -318,6 +380,8 @@ static int lept_parse_value(lept_context* c ,lept_value* v){
         return lept_parse_literal(c,v,"null",LEPT_NULL);
     case '\0':
         return LEPT_PARSE_EXPECT_VALUE;
+    case '[':
+        return lept_parse_array(c,v);
     case '"':
         return lept_parse_string(c,v);
     default:
@@ -374,4 +438,17 @@ int lept_get_boolean(const lept_value* v){
 void lept_set_boolean(lept_value *v ,int b){
     lept_free(v);
     v->type = b ? LEPT_TRUE : LEPT_FALSE; /* b为1设置为true,0为false */
+}
+
+/* 访问JSON数组元素的个数 */
+size_t lept_get_array_size(const lept_value* v){
+    assert(v !=NULL && v->type == LEPT_ARRAY);
+    return v->u.array.size;
+}
+
+/* 访问json数组的第 index个元素 */
+lept_value* lept_get_array_element(const lept_value* v, size_t index) {
+    assert(v != NULL && v->type == LEPT_ARRAY);
+    assert(index < v->u.array.size);
+    return &v->u.array.e[index];
 }
