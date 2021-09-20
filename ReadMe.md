@@ -351,3 +351,146 @@ static int lept_parse_array(lept_context* c, lept_value* v) {
 第二种写法中我们把这个指针调用 lept_parse_value(c, e)，这里会出现问题，因为 lept_parse_value() 及之下的函数都需要调用 lept_context_push()，而 lept_context_push() 在发现栈满了的时候会用 realloc() 扩容。这时候，我们上层的 e 就会失效，变成一个悬挂指针（dangling pointer），而且 lept_parse_value(c, e) 会通过这个指针写入解析结果，造成非法访问。
 
 **函数编码规范**： 考虑变量的生命周期，特别是指针的生命周期尤其重要。
+
+# Part6 解析对象
+
+## 1.JSON对象
+JSON对象主要是以`{} (U+007B)、U+007D)`表四，另外JSON对象由对象成员（member）组成，而JSON数组由JSON值组成。
+
+所谓对象成员，就是键值对，键必须为JSON字符串，然后值是JSON值，中间以`:`分割，完整语法如下：
+
+```cpp
+member = string ws %x3A ws value
+object = %x7B ws [ member *( ws %x2C ws member ) ] ws %x7D
+```
+## 2.数据结构
+(1)动态数组：可扩展的数组，例如c++的vector；
+
+(2)有序动态数组：和动态数组一样，但保证元素已经排序，可以用二分查找查询成员。
+
+(3)平衡树：平衡二叉树可有序地遍历成员，例如红黑树和c++的map；
+
+(4)哈希表：哈希函数实现 $O(1)$ 的查询，unordered_map;
+
+几种数据结构的对比：
+
+![image-20210918140405522](https://i.loli.net/2021/09/18/FEgSn2NyR4diOVq.png)
+
+## 3.重构字符串解析函数
+将函数重构，分成两部分，主要是为了将c解析成
+
+```cpp
+/* 解析 JSON 字符串，把结果写入 str 和 len */
+/* str 指向 c->stack 中的元素，需要在 c->stack  */
+static int lept_parse_string_raw(lept_context* c, char** str, size_t* len) {
+    /* \todo */
+}
+
+static int lept_parse_string(lept_context* c, lept_value* v) {
+    int ret;
+    char* s;
+    size_t len;
+    if ((ret = lept_parse_string_raw(c, &s, &len)) == LEPT_PARSE_OK)
+        lept_set_string(v, s, len);
+    return ret;
+}
+
+```
+## 4.解析object的过程
+
+（1）利用重构的`lept_parse_string_raw`解析键的字符串。若字符串解析成功，它会把结果存储在我们的栈之中，需要把结果写入临时 lept_member 的 k 和 klen 字段中：
+```cpp
+static int lept_parse_object(lept_context* c, lept_value* v) {
+    size_t i, size;
+    lept_member m;
+    int ret;
+    /* ... */
+    m.k = NULL;
+    size = 0;
+    for (;;) {
+        char* str;
+        lept_init(&m.v);
+        /* 1. parse key */
+        if (*c->json != '"') {
+            ret = LEPT_PARSE_MISS_KEY;
+            break;
+        }
+        if ((ret = lept_parse_string_raw(c, &str, &m.klen)) != LEPT_PARSE_OK)
+            break;
+        memcpy(m.k = (char*)malloc(m.klen + 1), str, m.klen);
+        m.k[m.klen] = '\0';
+        /* 2. parse ws colon ws */
+        /* ... */
+    }
+    /* 5. Pop and free members on the stack */
+    /* ... */
+}
+
+```
+
+（2）解析冒号，去除冒号前后的空白字符。
+```cpp
+        /* 2. parse ws colon ws */
+        lept_parse_whitespace(c);
+        if (*c->json != ':') {
+            ret = LEPT_PARSE_MISS_COLON;
+            break;
+        }
+        c->json++;
+        lept_parse_whitespace(c);
+```
+
+（3）解析任意的JSON值，递归调用`lept_Parse_value` 把结果写入临时的`lept_member`的v字段，然后把整个lept_member压入栈中。
+
+```cpp
+        /* 3. parse value */
+        if ((ret = lept_parse_value(c, &m.v)) != LEPT_PARSE_OK)
+            break;
+        memcpy(lept_context_push(c, sizeof(lept_member)), &m, sizeof(lept_member));
+        size++;
+        m.k = NULL; /* ownership is transferred to member on stack */
+
+```
+
+**注意**：如果缺少冒号或是这里解析值失败，在函数返回前我们要释放 m.k。如果我们成功地解析整个成员，那么就要把 m.k 设为空指针，其意义是说明该键的字符串的拥有权已转移至栈，之后如遇到错误，我们不会重覆释放栈里成员的键和这个临时成员的键。
+
+（4）解析逗号或者右括号
+
+遇上右花括号的话，当前的 JSON 对象就解析完结了，我们把栈上的成员复制至结果，并直接返回：
+
+```cpp
+        /* 4. parse ws [comma | right-curly-brace] ws */
+        lept_parse_whitespace(c);
+        if (*c->json == ',') {
+            c->json++;
+            lept_parse_whitespace(c);
+        }
+        else if (*c->json == '}') {
+            size_t s = sizeof(lept_member) * size;
+            c->json++;
+            v->type = LEPT_OBJECT;
+            v->u.o.size = size;
+            memcpy(v->u.o.m = (lept_member*)malloc(s), lept_context_pop(c, s), s);
+            return LEPT_PARSE_OK;
+        }
+        else {
+            ret = LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET;
+            break;
+        }
+
+```
+
+（5）释放资源
+
+当 for (;;) 中遇到任何错误便会到达这第 5 步，要释放临时的 key 字符串及栈上的成员：
+```cpp
+    /* 5. Pop and free members on the stack */
+    free(m.k);
+    for (i = 0; i < size; i++) {
+        lept_member* m = (lept_member*)lept_context_pop(c, sizeof(lept_member));
+        free(m->k);
+        lept_free(&m->v);
+    }
+    v->type = LEPT_NULL;
+    return ret;
+```

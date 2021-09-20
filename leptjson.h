@@ -20,13 +20,17 @@ typedef struct {
 
 /* 由于JSON数组定义是用到了lept_value，结构体内使用自身类型的指针，我们必须前向声明此类型 */
 typedef struct lept_value lept_value;
+typedef struct lept_member lept_member;
 
 /* 设置为联合体是因为节省内存 24字节 */
 struct lept_value{
     union 
     {
-        struct 
-        {
+        struct {
+            lept_member* m;
+            size_t size;
+        }obj;
+        struct {
             lept_value* e;  /* 数组元素*/
             size_t size;    /* 数组元素个数 */
         }array;
@@ -37,6 +41,14 @@ struct lept_value{
         double num; /* 数字 number */
     }u;
     lept_type type;
+};
+
+/* 成员结构是一个lept_value值加上键的字符串。 */
+struct lept_member
+{
+    char* k;            /* 键值，是一个字符串 */
+    size_t kStringLen; /* 保留字符串的长度，因为字符串本身可能为零*/
+    lept_value v;
 };
 
 /*lept_parse函数的返回值是一下枚举值，无错误会返回LEPT_PARSE_OK；*/
@@ -51,7 +63,10 @@ enum {
     LEPT_PARSE_INVALID_STRING_CHAR,
     LEPT_PARSE_INVALID_UNICODE_HEX,
     LEPT_PARSE_INVALID_UNICODE_SURROGATE,
-    LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET
+    LEPT_PARSE_MISS_COMMA_OR_SQUARE_BRACKET,
+    LEPT_PARSE_MISS_KEY,
+    LEPT_PARSE_MISS_COLON,
+    LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET
 };
 
 #define lept_init(v) do{ (v)->type = LEPT_NULL;} while(0)
@@ -88,5 +103,10 @@ void lept_set_string(lept_value* v,const char* s,size_t len);
 
 size_t lept_get_array_size(const lept_value* v);
 lept_value* lept_get_array_element(const lept_value* v,size_t index);
+
+size_t lept_get_object_size(const lept_value* v);
+const char* lept_get_object_key(const lept_value* v,  size_t index);
+size_t lept_get_object_key_length(const lept_value*v, size_t index);
+lept_value* lept_get_object_value(const lept_value* v,size_t index);
 
 #endif /* LEPTJSON_H__ */
