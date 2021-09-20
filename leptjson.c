@@ -639,6 +639,7 @@ lept_value* lept_get_object_value(const lept_value* v, size_t index) {
 }
 
 /* 将长度为len的字符串s写进c中 */
+#if 0
 static void lept_stringify_string(lept_context* c,const char* s, size_t len){
     size_t i;
     assert(s != NULL);
@@ -666,6 +667,41 @@ static void lept_stringify_string(lept_context* c,const char* s, size_t len){
     }
     PUTC(c,'"');
 }
+#else
+/* 避免每次输出一个字符／字符串，都要调用 lept_context_push() */
+/* 优化的思路：预先分配足够的内存空间，每次加入字符就不用检测，每个字符的最长的形式为\u00XX，占6个字符
+加上首尾的两个双引号，一共是len * 6 + 2个输出字符*/
+static void lept_stringify_string(lept_context* c, const char* s ,size_t len){
+    static const char hex_digits[] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
+    size_t i, size;
+    char* head,*p;
+    assert(s != NULL);
+    p = head = lept_context_push(c,size = len * 6 + 2); /*  "\u00xx" */
+    *p++ = '"';
+    for (i = 0; i < len; i++) {
+        unsigned char ch = (unsigned char)s[i];
+        switch (ch) {
+            case '\"': *p++ = '\\'; *p++ = '\"'; break;
+            case '\\': *p++ = '\\'; *p++ = '\\'; break;
+            case '\b': *p++ = '\\'; *p++ = 'b';  break;
+            case '\f': *p++ = '\\'; *p++ = 'f';  break;
+            case '\n': *p++ = '\\'; *p++ = 'n';  break;
+            case '\r': *p++ = '\\'; *p++ = 'r';  break;
+            case '\t': *p++ = '\\'; *p++ = 't';  break;
+            default:
+                if (ch < 0x20) {
+                    *p++ = '\\'; *p++ = 'u'; *p++ = '0'; *p++ = '0';
+                    *p++ = hex_digits[ch >> 4];
+                    *p++ = hex_digits[ch & 15];
+                }
+                else
+                    *p++ = s[i];
+        }
+    }
+    *p++ = '"';
+    c->top -= size - (p - head);
+}
+#endif
 
 
 /* 反解析v，写进c中 */
