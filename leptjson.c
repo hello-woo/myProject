@@ -4,9 +4,14 @@
 #include <errno.h> /*errno*/
 #include <math.h> /* HUGE_VAL */
 #include <string.h> /* memcpy() */
+#include <stdio.h> /* sprintf() */
 
 #ifndef LEPT_PARSE_STACK_INIT_SIZE
 #define LEPT_PARSE_STACK_INIT_SIZE 256
+#endif
+
+#ifndef LEPT_PARSE_STRINGIFY_INIT_SIZE
+#define LEPT_PARSE_STRINGIFY_INIT_SIZE 256
 #endif
 
 #define EXPECT(c, ch)       do { assert(*c->json == (ch)); c->json++;} while(0)
@@ -14,6 +19,8 @@
 #define ISDIGIT(ch)         ((ch) >= '0' && (ch) <= '9')
 /* 返回值为指针：lept_context 栈的指针加上栈顶元素的位置，该位置的值附上值ch*/
 #define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
+
+#define PUTS(c,s,len)       memcpy(lept_context_push(c,len) , s, len)
 
 
 /*
@@ -629,4 +636,101 @@ lept_value* lept_get_object_value(const lept_value* v, size_t index) {
     assert(v != NULL && v->type == LEPT_OBJECT);
     assert(index < v->u.obj.size);
     return &v->u.obj.m[index].v;
+}
+
+/* 将长度为len的字符串s写进c中 */
+static void lept_stringify_string(lept_context* c,const char* s, size_t len){
+    size_t i;
+    assert(s != NULL);
+    PUTC(c,'"');
+    for(i = 0 ;i < len ;i++){
+        unsigned char ch = (unsigned char)s[i];
+        switch (ch){
+            case '\"': PUTS(c, "\\\"", 2); break;
+            case '\\': PUTS(c, "\\\\", 2); break;
+            case '\b': PUTS(c, "\\b",  2); break;
+            case '\f': PUTS(c, "\\f",  2); break;
+            case '\n': PUTS(c, "\\n",  2); break;
+            case '\r': PUTS(c, "\\r",  2); break;
+            case '\t': PUTS(c, "\\t",  2); break;
+            default:
+                if(ch < 0x20){
+                    char buffer[7];
+                    sprintf(buffer, "\\u%04X",ch);
+                    PUTS(c , buffer ,6);
+                }else{
+                    PUTC(c,s[i]);
+                }
+            break;
+        }
+    }
+    PUTC(c,'"');
+}
+
+
+/* 反解析v，写进c中 */
+static void lept_stringify_value(lept_context* c,const lept_value* v){
+    size_t i;
+    switch (v->type)
+    {
+    case  LEPT_NULL:
+        PUTS(c,"null",4);
+        break;
+    case LEPT_FALSE:
+        PUTS(c, "false" ,5);
+        break;
+    case LEPT_TRUE:
+        PUTS(c,"true" ,4);
+        break;
+    case LEPT_NUMBER:
+        /* 原始的写法 */
+        /*char buffer[32];
+        int length =sprintf(buffer,"%.17g",v->u.num);
+        PUTS(c,buffer,length); 
+        这里每次都要在puts中做一次memcpy操作，为了避免这次复制，直接在生成的时候写进c里的堆栈中*/
+        /* 优化后的写法 */
+        c->top -= 32 - sprintf(lept_context_push(c, 32), "%.17g", v->u.num);
+        break;
+    case LEPT_STRING:
+        lept_stringify_string(c,v->u.str.s,v->u.str.len);
+        break;
+    case LEPT_ARRAY:
+        PUTC(c,'[');
+        for(i = 0 ;i < v->u.array.size; i++){
+            if(i > 0){
+                PUTC(c,',');
+            }
+            lept_stringify_value(c, &v->u.array.e[i]);
+        }
+        PUTC(c, ']');
+        break;
+    case LEPT_OBJECT:
+        PUTC(c,'{');
+        for(i = 0 ;i < v->u.obj.size; i++){
+            if(i > 0){
+                PUTC(c,',');
+            }
+            lept_stringify_string(c,v->u.obj.m[i].k,v->u.obj.m[i].kStringLen);
+            PUTC(c, ':');
+            lept_stringify_value(c,&v->u.obj.m[i].v);
+        }
+        PUTC(c, '}');
+        break;
+    default:
+        assert(0 && "invalid type");
+        break;
+    }
+}
+
+char* lept_stringify(const lept_value* v,size_t* length){
+    lept_context c;
+    assert(v != NULL);
+    c.stack = (char*) malloc(c.size = LEPT_PARSE_STRINGIFY_INIT_SIZE);
+    c.top = 0;
+    lept_stringify_value(&c,v);
+    if(length){
+        *length = c.top;
+    }
+    PUTC(&c,'\0');
+    return c.stack;
 }

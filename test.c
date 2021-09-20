@@ -222,45 +222,6 @@ static void test_parse_invalid_string_char() {
 #endif
 }
 
-static void test_access_null(){
-    lept_value v;
-    lept_init(&v);
-    lept_set_string(&v,"a",1);
-    lept_set_null(&v);
-    EXPECT_EQ_INT(LEPT_NULL , lept_get_type(&v));
-    lept_free(&v);
-}
-
-static void test_access_boolean() {
-    lept_value v;
-    lept_init(&v);
-    lept_set_string(&v,"a",1);
-    lept_set_boolean(&v, 1); /* 设置为true */
-    EXPECT_TRUE(lept_get_boolean(&v));
-    lept_set_boolean(&v ,0);
-    EXPECT_FALSE(lept_get_boolean(&v));
-    lept_free(&v);
-}
-
-static void test_access_number() {
-    lept_value v;
-    lept_init(&v);
-    lept_set_string(&v,"a", 1);
-    lept_set_number(&v,1234.5);
-    EXPECT_EQ_DOUBLE(1234.5,lept_get_number(&v));
-    lept_free(&v);
-}
-
-static void test_access_string() {
-    lept_value v;
-    lept_init(&v);
-    lept_set_string(&v, "", 0);
-    EXPECT_EQ_STRING("", lept_get_string(&v), lept_get_string_length(&v));
-    lept_set_string(&v, "Hello", 5);
-    EXPECT_EQ_STRING("Hello", lept_get_string(&v), lept_get_string_length(&v));
-    lept_free(&v);
-}
-
 static void test_parse_invalid_unicode_hex() {
     TEST_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX, "\"\\u\"");
     TEST_ERROR(LEPT_PARSE_INVALID_UNICODE_HEX, "\"\\u0\"");
@@ -405,6 +366,7 @@ static void test_parse_miss_comma_or_curly_bracket() {
     TEST_ERROR(LEPT_PARSE_MISS_COMMA_OR_CURLY_BRACKET, "{\"a\":{}");
 }
 
+
 static void test_parse() {
     test_parse_null();
     test_parse_true();
@@ -421,10 +383,6 @@ static void test_parse() {
     test_parse_invalid_string_char();
     test_parse_invalid_unicode_hex();
     test_parse_invalid_unicode_surrogate();
-    test_access_null();
-    test_access_boolean();
-    test_access_number();
-    test_access_string();
 
     test_parse_array();
     test_parse_miss_comma_or_square_bracket();
@@ -434,8 +392,124 @@ static void test_parse() {
     test_parse_miss_comma_or_curly_bracket();
 }
 
+
+static void test_access_null(){
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v,"a",1);
+    lept_set_null(&v);
+    EXPECT_EQ_INT(LEPT_NULL , lept_get_type(&v));
+    lept_free(&v);
+}
+
+static void test_access_boolean() {
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v,"a",1);
+    lept_set_boolean(&v, 1); /* 设置为true */
+    EXPECT_TRUE(lept_get_boolean(&v));
+    lept_set_boolean(&v ,0);
+    EXPECT_FALSE(lept_get_boolean(&v));
+    lept_free(&v);
+}
+
+static void test_access_number() {
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v,"a", 1);
+    lept_set_number(&v,1234.5);
+    EXPECT_EQ_DOUBLE(1234.5,lept_get_number(&v));
+    lept_free(&v);
+}
+
+static void test_access_string() {
+    lept_value v;
+    lept_init(&v);
+    lept_set_string(&v, "", 0);
+    EXPECT_EQ_STRING("", lept_get_string(&v), lept_get_string_length(&v));
+    lept_set_string(&v, "Hello", 5);
+    EXPECT_EQ_STRING("Hello", lept_get_string(&v), lept_get_string_length(&v));
+    lept_free(&v);
+}
+
+
+static void test_access(){
+    test_access_null();
+    test_access_boolean();
+    test_access_number();
+    test_access_string();
+}
+
+#define TEST_ROUNDTRIP(json)\
+    do{\
+        lept_value v;\
+        char* json2;\
+        size_t length;\
+        lept_init(&v);\
+        EXPECT_EQ_INT(LEPT_PARSE_OK,lept_parse(&v,json));\
+        json2 = lept_stringify(&v,&length);\
+        EXPECT_EQ_STRING(json,json2,length);\
+        lept_free(&v);\
+        free(json2);\
+    }while (0)
+
+static void  test_stringify_number(){
+    TEST_ROUNDTRIP("0");
+    TEST_ROUNDTRIP("-0");
+    TEST_ROUNDTRIP("1");
+    TEST_ROUNDTRIP("-1");
+    TEST_ROUNDTRIP("1.5");
+    TEST_ROUNDTRIP("-1.5");
+    TEST_ROUNDTRIP("3.25");
+    TEST_ROUNDTRIP("1e+20");
+    TEST_ROUNDTRIP("1.234e+20");
+    TEST_ROUNDTRIP("1.234e-20");
+
+    TEST_ROUNDTRIP("1.0000000000000002"); /* the smallest number > 1 */
+    TEST_ROUNDTRIP("4.9406564584124654e-324"); /* minimum denormal */
+    TEST_ROUNDTRIP("-4.9406564584124654e-324");
+    TEST_ROUNDTRIP("2.2250738585072009e-308");  /* Max subnormal double */
+    TEST_ROUNDTRIP("-2.2250738585072009e-308");
+    TEST_ROUNDTRIP("2.2250738585072014e-308");  /* Min normal positive double */
+    TEST_ROUNDTRIP("-2.2250738585072014e-308");
+    TEST_ROUNDTRIP("1.7976931348623157e+308");  /* Max double */
+    TEST_ROUNDTRIP("-1.7976931348623157e+308");
+}
+
+static void test_stringify_string() {
+    TEST_ROUNDTRIP("\"\"");
+    TEST_ROUNDTRIP("\"Hello\"");
+    TEST_ROUNDTRIP("\"Hello\\nWorld\"");
+    TEST_ROUNDTRIP("\"\\\" \\\\ / \\b \\f \\n \\r \\t\"");
+    TEST_ROUNDTRIP("\"Hello\\u0000World\"");
+}
+
+static void test_stringify_array() {
+    TEST_ROUNDTRIP("[]");
+    TEST_ROUNDTRIP("[null,false,true,123,\"abc\",[1,2,3]]");
+}
+
+
+static void test_stringify_object() {
+    TEST_ROUNDTRIP("{}");
+    TEST_ROUNDTRIP("{\"n\":null,\"f\":false,\"t\":true,\"i\":123,\"s\":\"abc\",\"a\":[1,2,3],\"o\":{\"1\":1,\"2\":2,\"3\":3}}");
+}
+
+static void test_stringify() {
+    TEST_ROUNDTRIP("null");
+    TEST_ROUNDTRIP("false");
+    TEST_ROUNDTRIP("true");
+    test_stringify_number();
+    test_stringify_string();
+    test_stringify_array();
+    test_stringify_object();
+}
+
+
 int main() {
     test_parse();
+    test_access();
+    test_stringify();
     printf("%d/%d (%3.2f%%) passed\n", test_pass, test_count, test_pass * 100.0 / test_count);
   /*   printf("this is the sizeof lept_value :%d %d %d\n ",(int)sizeof(lept_value),(int)sizeof(v.u),(int)sizeof(lept_type)); */
     return main_ret;

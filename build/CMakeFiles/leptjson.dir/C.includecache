@@ -19,6 +19,8 @@ math.h
 -
 string.h
 -
+stdio.h
+-
 
 /home/zzc/myProject/leptjson.h
 stddef.h

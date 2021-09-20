@@ -482,7 +482,7 @@ static int lept_parse_object(lept_context* c, lept_value* v) {
 
 （5）释放资源
 
-当 for (;;) 中遇到任何错误便会到达这第 5 步，要释放临时的 key 字符串及栈上的成员：
+当 for (; ; ) 中遇到任何错误便会到达这第 5 步，要释放临时的 key 字符串及栈上的成员：
 ```cpp
     /* 5. Pop and free members on the stack */
     free(m.k);
