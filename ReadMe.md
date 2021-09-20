@@ -494,3 +494,55 @@ static int lept_parse_object(lept_context* c, lept_value* v) {
     v->type = LEPT_NULL;
     return ret;
 ```
+
+# Part07  JSON生成器
+
+## 1、JSON生成器
+
+JSON解析器：把JSON文本解析成一个树形结构，整个结构以lept_value的节点组成。
+
+JSON生成器：把树形结构转换成JSON文本，功能与JSON解析器相反，这个过程又称为字符串化（stringify)
+
+![image-20210920162712062](https://i.loli.net/2021/09/20/6LEUDWuQYxy1s8p.png)
+
+生成器的API设计为一下形式，直接返回JSON字符串。
+```cpp
+char* lept_stringify(const lept_value* v,size_t* length);
+```
+length 参数是可选参数，它会存储JSON数组长度，传入NULL可以忽略此参数。使用方负责用free释放内存。
+
+假定字符串没有换行、缩进等美化处理，因此生成的json会是单行，没有空白字符的最近凑的形式。
+
+## 2.利用lept_context做动态数组
+
+在实现 JSON 解析时，我们加入了一个动态变长的堆栈，用于存储临时的解析结果。而现在，我们也需要存储生成的结果，所以最简单是再利用该数据结构，作为输出缓冲区。
+
+```cpp
+#ifndef LEPT_PARSE_STRINGIFY_INIT_SIZE
+#define LEPT_PARSE_STRINGIFY_INIT_SIZE 256
+#endif
+
+int lept_stringify(const lept_value* v, char** json, size_t* length) {
+    lept_context c;
+    int ret;
+    assert(v != NULL);
+    assert(json != NULL);
+    c.stack = (char*)malloc(c.size = LEPT_PARSE_STRINGIFY_INIT_SIZE);
+    c.top = 0;
+    if ((ret = lept_stringify_value(&c, v)) != LEPT_STRINGIFY_OK) {
+        free(c.stack);
+        *json = NULL;
+        return ret;
+    }
+    if (length)
+        *length = c.top;
+        /* 在结尾出加入一个空字符串作为结尾 */
+    PUTC(&c, '\0');
+    *json = c.stack;
+    return LEPT_STRINGIFY_OK;
+}
+```
+
+## 3.生成null、false和true
+
+这里我们采用一个最简单的测试方式，把一个 JSON 解析，然后再生成另一 JSON，逐字符比较两个 JSON 是否一模一样。这种测试可称为**往返（roundtrip）测试**。但需要注意，同一个 JSON 的内容可以有多种不同的表示方式，例如可以插入不定数量的空白字符，数字 1.0 和 1 也是等价的。所以另一种测试方式，是比较两次解析的结果（lept_value 的树）是否相同，此功能将会在下一单元讲解。
