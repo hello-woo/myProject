@@ -12,9 +12,7 @@
 template<typename T>
 class threadpool{
 public:
-    threadpool(int thread_number = 8,int max_requests = 10000){
-
-    }
+    threadpool(int thread_number = 8,int max_requests = 10000);
     ~threadpool();
     //添加任务的方法
     bool append(T* request);
@@ -49,7 +47,7 @@ private:
 template<typename T>
 threadpool<T>::threadpool(int thread_number,int max_requests):
     m_thread_number(thread_number),m_max_requests(max_requests),
-    m_stop(false),m_thread(NULL){
+    m_stop(false),m_threads(NULL){
     if((thread_number<=0)||(m_max_requests<=0)){
         throw std::exception();
     }
@@ -65,7 +63,7 @@ threadpool<T>::threadpool(int thread_number,int max_requests):
             delete []m_threads;
             throw std::exception();
         }
-        if(pthread_detach(m_thread[i]){
+        if(pthread_detach(m_threads[i])){
             delete []m_threads;
             throw std::exception();
         }
@@ -101,7 +99,7 @@ void * threadpool<T>::worker(void* arg){
 
 template<typename T>
 void threadpool<T>::run(){
-    while(!m_stop()){
+    while(!m_workqueue.empty()){
         m_queuestat.wait();
         m_queuelocker.lock();
         if(m_workqueue.empty()){
@@ -120,6 +118,4 @@ void threadpool<T>::run(){
         request->process();
     }
 }
-
-
-#endif THREADPOOL_H
+#endif 
