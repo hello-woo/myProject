@@ -21,7 +21,7 @@
 #define PUTC(c, ch)         do { *(char*)lept_context_push(c, sizeof(char)) = (ch); } while(0)
 
 #define PUTS(c,s,len)       memcpy(lept_context_push(c,len) , s, len)
-
+#define LEPT_KEY_NOT_EXIST  ((size_t) - 1)
 
 /*
 首先为了减少解析函数之间传递多个参数，我们把这些数据都放进一个 lept_context 结构体
@@ -769,4 +769,63 @@ char* lept_stringify(const lept_value* v,size_t* length){
     }
     PUTC(&c,'\0');
     return c.stack;
+}
+
+size_t lept_find_object_index(const lept_value* v,const char* key, size_t klen){
+    size_t i;
+    assert(v != NULL && v->type == LEPT_OBJECT && key != NULL);
+    for(i = 0 ;i < v->u.obj.size ;i++){
+        if(v->u.obj.m[i].kStringLen == klen && memcmp(v->u.obj.m[i].k , key,klen) == 0){
+            return i;
+        }
+    }
+    return LEPT_KEY_NOT_EXIST;
+}
+
+lept_value* lept_find_object_value(lept_value* v,const char* key,size_t klen){
+    size_t index = lept_find_object_index(v,key,klen);
+    return index != LEPT_KEY_NOT_EXIST ? &v->u.obj.m[index].v :NULL;
+}
+
+int lept_is_equal(const lept_value* lhs, const lept_value* rhs){
+    size_t i;
+    assert(lhs != NULL && rhs != NULL);
+    if(lhs->type != rhs->type){
+        return 0;
+    }
+    switch (lhs->type)
+    {
+    case LEPT_STRING:
+        return lhs->u.str.len == rhs->u.str.len && memcmp(lhs->u.str.s,rhs->u.str.s,lhs->u.str.len) == 0;
+    case LEPT_NUMBER:
+        return lhs->u.num == rhs->u.num;
+    case LEPT_ARRAY:
+        if(lhs->u.array.size != rhs->u.array.size){
+            return 0;
+        }
+        for(i = 0;i < lhs->u.array.size ;i++){
+            if(!lept_is_equal(&lhs->u.array.e[i],&rhs->u.array.e[i])){
+                return 0;
+            }
+        }
+        return 1;
+    case LEPT_OBJECT:
+        if(lhs->u.obj.size != rhs->u.obj.size){
+            return 0;
+        }
+        for(i = 0 ;i < lhs->u.obj.size; i++){
+            char* keyVal = lept_get_object_key(lhs,i);
+            int keyLen = lept_get_object_key_length(lhs,i);
+            if(lept_find_object_index(rhs, keyVal, keyLen) == LEPT_KEY_NOT_EXIST
+             || lept_find_object_value(&rhs,keyVal,keyLen) != lept_get_object_value(lhs,i)){
+                return 0;
+            }
+            if(!lept_is_equal(&lhs->u.obj.m[i].v,&rhs->u.obj.m[i].v)){
+                return 0;
+            }
+        }
+        return 1;
+    default:
+        return 1;
+    }
 }
