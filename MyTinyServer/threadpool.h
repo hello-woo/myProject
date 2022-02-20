@@ -79,6 +79,7 @@ threadpool<T>::~threadpool(){
 
 template<typename T>
 bool threadpool<T>::append(T* request){
+    // 操作工作队列时一定要加锁，因为它被所有线程共享。
     m_queuelocker.lock();
     if(m_workqueue.size() > m_max_requests){
         m_queuelocker.unlock();
@@ -99,7 +100,7 @@ void * threadpool<T>::worker(void* arg){
 
 template<typename T>
 void threadpool<T>::run(){
-    while(!m_workqueue.empty()){
+    while(!m_stop){
         m_queuestat.wait();
         m_queuelocker.lock();
         if(m_workqueue.empty()){

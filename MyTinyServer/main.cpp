@@ -38,7 +38,7 @@ extern void modfd(int epollfd,int fd,int ev);
 
 int main(int argc ,char* argv[]){
     if(argc <=1){
-        printf("按照如下格式运行：%s port_num\n",basename(argv[0]));
+        printf("按照如下格式运行:%s port_num\n",basename(argv[0]));
         exit(-1);
     }
     //获取端口号
